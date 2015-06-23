@@ -22,7 +22,7 @@ import org.apache.spark.rdd.RDD
 
 
 /**
- * Provides a way of calculating the one-sided Kolmogorov Smirnov test for data sampled from a
+ * Provides a way of calculating the two-sided Kolmogorov Smirnov test for data sampled from a
  * continuous distribution. By comparing the largest difference between the empirical cumulative
  * distribution of the sample data and the theoretical distribution (in the case of 1 sample test),
  * or another sample data (in the case of the 2 sample test) we can provide a test for the
@@ -40,20 +40,20 @@ object KS {
    */
   def ecdf(dat: RDD[Double]): RDD[(Double, Double)] = {
     val n = dat.count().toDouble
-    dat.sortBy(x => x).zipWithIndex().map { case (v, i) => (v, i / n) }
+    dat.sortBy(x => x).zipWithIndex().map { case (v, i) => (v, (i + 1) / n) }
   }
 
   /**
    * Runs a KS test for 1 set of sample data, comparing it to a theoretical distribution
    * @param dat the data we wish to evaluate
    * @param cdf a function to calculate the
-   * @return the KS statistic and p-value associated with a one sided test
+   * @return the KS statistic and p-value associated with a two sided test
    */
   def testOneSample(dat: RDD[Double], cdf: Double => Double): (Double, Double) = {
     val empiriRDD = ecdf(dat) // empirical distribution
     val distances = empiriRDD.map { case (v, empVal) => Math.abs(cdf(v) -  empVal) }
     val ksStat = distances.max
-    evalOneSided(ksStat, distances.count())
+    evalP(ksStat, distances.count())
   }
 
   /**
@@ -64,14 +64,14 @@ object KS {
    * @param dat the data we wish to evaluate
    * @param distCalc a function to calculate the distance between an empirical value and the
    *                 theoretical value
-   * @return the KS statistic and p-value associated with a one sided test
+   * @return the KS statistic and p-value associated with a two sided test
    */
   def testOneSampleOpt(dat: RDD[Double], distCalc: Iterator[(Double, Double)] => Iterator[Double])
     : (Double, Double) = {
     val empiriRDD = ecdf(dat) // empirical distribution
     val distances = empiriRDD.mapPartitions(distCalc, false)
     val ksStat = distances.max
-    evalOneSided(ksStat, distances.count())
+    evalP(ksStat, distances.count())
   }
 
   /**
@@ -89,7 +89,7 @@ object KS {
    * a named distribution
    * @param dat the sample data that we wish to evaluate
    * @param distName the name of the theoretical distribution
-   * @return The KS statistic and p-value associated with a one sided test
+   * @return The KS statistic and p-value associated with a two sided test
    */
   def testOneSample(dat: RDD[Double], distName: String): (Double, Double) = {
     val distanceCalc =
@@ -101,22 +101,7 @@ object KS {
     testOneSampleOpt(dat, distanceCalc)
   }
 
-
-  def testTwoSample(dat1: RDD[Double], dat2: RDD[Double]): (Double, Double) = {
-    val n1 = dat1.count()
-    val n2 = dat2.count()
-    if(n1 != n2) {
-      // throw exception for mismatched lengths (search mllib for existing exception)
-      throw new Exception("mismatched sizes")
-    }
-    val empiri1 = ecdf(dat1)
-    val empiri2 = ecdf(dat2)
-    val distances = empiri1.zip(empiri2).map { case (p1, p2) => Math.abs(p1._2 - p2._2) }
-    val ksStat = distances.max
-    evalOneSided(ksStat, n1)
-  }
-  
-  private[KS] def evalOneSided(ksStat: Double, n: Long): (Double, Double) = {
+  private[KS] def evalP(ksStat: Double, n: Long): (Double, Double) = {
     val pval = 1 - new KolmogorovSmirnovTest().cdf(ksStat, n.toInt)
     (ksStat, pval)
   }
