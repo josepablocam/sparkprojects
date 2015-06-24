@@ -33,14 +33,14 @@ import org.apache.spark.rdd.RDD
  */
 object KS {
   /**
-   * Calculate empirical cumulative distribution function
+   * Calculate empirical cumulative distribution function values to then calculate D- and D+
    * @param dat data over which we which to calculate the empirical cumulative distribution
-   * @return and RDD of (Double, Double), where the first element in each tuple is the value
-   *         and the second element is the empirical cumulative probability of that value
+   * @return and RDD of (Double, Double, Double), where the first element in each tuple is the value
+   *         and the second element is the value for D- and the third element is the value for D+
    */
-  def ecdf(dat: RDD[Double]): RDD[(Double, Double)] = {
+  def ecdf(dat: RDD[Double]): RDD[(Double, Double, Double)] = {
     val n = dat.count().toDouble
-    dat.sortBy(x => x).zipWithIndex().map { case (v, i) => (v, (i + 1) / n) }
+    dat.sortBy(x => x).zipWithIndex().map { case (v, i) => (v, i / n, (i + 1) / n) }
   }
 
   /**
@@ -51,8 +51,13 @@ object KS {
    */
   def testOneSample(dat: RDD[Double], cdf: Double => Double): (Double, Double) = {
     val empiriRDD = ecdf(dat) // empirical distribution
-    val distances = empiriRDD.map { case (v, empVal) => Math.abs(cdf(v) -  empVal) }
-    val ksStat = distances.max
+    val distances = empiriRDD.map {
+      case (v, dl, dp) => {
+        val cdfVal = cdf(v)
+        Math.max(cdfVal - dl, dp - cdfVal)
+      }
+    }
+    val ksStat = distances.max()
     evalP(ksStat, distances.count())
   }
 
@@ -66,7 +71,8 @@ object KS {
    *                 theoretical value
    * @return the KS statistic and p-value associated with a two sided test
    */
-  def testOneSampleOpt(dat: RDD[Double], distCalc: Iterator[(Double, Double)] => Iterator[Double])
+  def testOneSampleOpt(dat: RDD[Double],
+                       distCalc: Iterator[(Double, Double, Double)] => Iterator[Double])
     : (Double, Double) = {
     val empiriRDD = ecdf(dat) // empirical distribution
     val distances = empiriRDD.mapPartitions(distCalc, false)
@@ -77,10 +83,13 @@ object KS {
   /**
    * @return Return a function that we can map over partitions to calculate the KS distance in each
    */
-  def stdNormDistances(): (Iterator[(Double, Double)]) => Iterator[Double] = {
+  def stdNormDistances(): (Iterator[(Double, Double, Double)]) => Iterator[Double] = {
     val dist = new NormalDistribution(0, 1)
-    (part: Iterator[(Double, Double)]) => part.map {
-      case (v, empVal) => Math.abs(dist.cumulativeProbability(v) - empVal)
+    (part: Iterator[(Double, Double, Double)]) => part.map {
+      case (v, dl, dp) => {
+        val cdfVal = dist.cumulativeProbability(v)
+        Math.max(cdfVal - dl, dp - cdfVal)
+      }
     }
   }
 

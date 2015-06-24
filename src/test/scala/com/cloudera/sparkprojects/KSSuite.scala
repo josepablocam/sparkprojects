@@ -16,6 +16,7 @@
 package com.cloudera.sparkprojects
 
 import org.apache.commons.math3.distribution.{ExponentialDistribution, NormalDistribution}
+import org.apache.commons.math3.stat.inference.KolmogorovSmirnovTest
 
 import org.apache.spark.SparkContext
 
@@ -31,32 +32,37 @@ class KSSuite extends FunSuite with ShouldMatchers {
     val data = (1 to 100).toArray.map(_.toDouble)
     val distData = sc.parallelize(data)
     val dist = KS.ecdf(distData).collect()
-    dist(0)._2 should be (0.01)
-    dist(data.length - 1)._2 should be (1.0)
-    dist(9)._2 should be (0.1)
+    dist(0)._3 should be (0.01)
+    dist(data.length - 1)._3 should be (1.0)
+    dist(9)._3 should be (0.1)
   }
 
   test("1 sample") {
     val sampledNorm = sc.parallelize(stdNormDist.sample(1000))
     val sampledExp = sc.parallelize(expDist.sample(1000))
+    val ksTest = new KolmogorovSmirnovTest()
 
     val threshold = 0.05
 
-    val accept1 = KS.testOneSample(sampledNorm, "stdnorm")
-    accept1._2 should be > threshold // cannot reject H0
+    val (stat1, pval1) = KS.testOneSample(sampledNorm, "stdnorm")
+    stat1 should be (ksTest.kolmogorovSmirnovStatistic(stdNormDist, sampledNorm.collect()))
+    pval1 should be > threshold // cannot reject H0
 
-    val reject1 = KS.testOneSample(sampledExp, "stdnorm")
-    reject1._2 should be < threshold // should reject H0
+    val (stat2, pval2) = KS.testOneSample(sampledExp, "stdnorm")
+    stat2 should be (ksTest.kolmogorovSmirnovStatistic(stdNormDist, sampledExp.collect()))
+    pval2 should be < threshold // should reject H0
 
     // dist is not serializable, so will have to create in the lambda
     val expCDF = ((p: Double) => (x: Double) => {
       new ExponentialDistribution(p).cumulativeProbability(x)
-      })(expParam)
+    })(expParam)
 
-    val accept2 = KS.testOneSample(sampledExp, expCDF)
-    accept2._2 should be > threshold // cannot reject H0
+    val (stat3, pval3) = KS.testOneSample(sampledExp, expCDF)
+    stat3 should be (ksTest.kolmogorovSmirnovStatistic(expDist, sampledExp.collect()))
+    pval3 should be > threshold // cannot reject H0
 
-    val reject2 = KS.testOneSample(sampledNorm, expCDF)
-    reject2._2 should be < threshold // should reject H0
+    val (stat4, pval4) = KS.testOneSample(sampledNorm, expCDF)
+    stat4 should be (ksTest.kolmogorovSmirnovStatistic(expDist, sampledNorm.collect()))
+    pval4 should be < threshold // should reject H0
   }
 }
